@@ -13,7 +13,7 @@ class ZonaPropScraper:
         self.scraper = cloudscraper.create_scraper()
         self.data = []
 
-    def get_listings(self, operation="venta", property_type="departamentos", location="capital-federal", max_pages=10):
+    def get_listings(self, operation="venta", property_type="departamentos", location="capital-federal", max_pages=2):
         # ZonaProp URL structure: /departamentos-venta-capital-federal-pagina-2.html
         
         for page in range(1, max_pages + 1):
