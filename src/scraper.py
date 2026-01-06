@@ -13,12 +13,23 @@ class ZonaPropScraper:
         self.scraper = cloudscraper.create_scraper()
         self.data = []
 
-    def get_listings(self, operation="venta", property_type="departamentos", location="capital-federal", max_pages=2):
+    def get_listings(self, operation="venta", property_type="departamentos", location="capital-federal", max_pages=None, max_items=None):
         # ZonaProp URL structure: /departamentos-venta-capital-federal-pagina-2.html
         
-        for page in range(1, max_pages + 1):
+        page = 1
+        safety_limit = 3000 # Prevent infinite loops
+        
+        while True:
+            if max_pages and page > max_pages:
+                print(f"Reached requested max_pages limit: {max_pages}")
+                break
+            
+            if page > safety_limit:
+                print(f"Reached safety limit of {safety_limit} pages. Stopping.")
+                break
+
             url = f"{self.base_url}/{property_type}-{operation}-{location}-pagina-{page}.html".replace("-pagina-1.html", ".html")
-            print(f"Scraping: {url}")
+            print(f"Scraping Page {page}: {url}")
             
             try:
                 # Add delay to be polite
@@ -31,21 +42,31 @@ class ZonaPropScraper:
                     break
                 
                 if response.status_code != 200:
-                    print(f"Failed to retrieve {url} - Status: {response.status_code}")
+                    # Often page N+1 redirects to page 1 or gives 404 when out of range
+                    print(f"Stopping: Failed to retrieve {url} - Status: {response.status_code}")
                     break 
                 
                 soup = BeautifulSoup(response.content, 'html.parser')
                 
+                # Check for redirect to first page (ZonaProp sometimes does this instead of 404)
+                if page > 1 and (f"-pagina-{page}.html" not in response.url and f"-pagina-1.html" not in url):
+                     # If the URL we are on doesn't match the requested page (and it's not page 1 normalized), we might have been redirected back
+                     # Simple check: if we asked for page 100 and got page 1
+                     current_url = response.url
+                     if f"-pagina-{page}" not in current_url and "pagina" not in current_url:
+                         # This logic is a bit tricky, relying on listings check is safer usually
+                         pass
+
                 # Verified selector from HTML dump: <div data-qa="posting PROPERTY">
                 listings = soup.find_all('div', attrs={"data-qa": ["posting PROPERTY", "posting DEVELOPMENT"]})
 
-                # Debugging: Save HTML if no listings found
                 if not listings:
-                    print(f"DEBUG: No listings found. Saving HTML to 'debug_zonaprop.html' for inspection.")
-                    with open("debug_zonaprop.html", "w", encoding="utf-8") as f:
-                        f.write(soup.prettify())
+                    print(f"No listings found on page {page}. Stopping.")
+                    break
 
                 print(f"Found {len(listings)} listings on page {page}")
+                
+                # ... processing listings ...
 
                 for item in listings:
                     try:
@@ -87,6 +108,10 @@ class ZonaPropScraper:
                             'description': description[:200], 
                             'url': full_url
                         })
+
+                        if max_items and len(self.data) >= max_items:
+                            print(f"Reached limit of {max_items} items.")
+                            return pd.DataFrame(self.data)
                         
                     except Exception as e:
                         print(f"Error parsing item: {e}")
@@ -95,12 +120,26 @@ class ZonaPropScraper:
             except Exception as e:
                 print(f"Error requesting {url}: {e}")
                 break
+            
+            # Next page
+            page += 1
                 
         return pd.DataFrame(self.data)
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Scrape Real Estate listings from ZonaProp")
+    parser.add_argument("--qty", type=int, default=0, help="Number of properties to scrape. Set to 0 for maximum available.")
+    args = parser.parse_args()
+
     scraper = ZonaPropScraper()
-    df = scraper.get_listings(max_pages=2)
+    
+    # Determine limits based on user input
+    limit = args.qty if args.qty > 0 else None
+    limit_msg = f"{limit}" if limit else "MAXIMUM"
+    print(f"Starting scraper... Target: {limit_msg} properties.")
+
+    df = scraper.get_listings(max_pages=None, max_items=limit)
     
     if not df.empty:
         print(df.head())
